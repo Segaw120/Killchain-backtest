@@ -1,6 +1,3 @@
-import warnings
-warnings.filterwarnings("ignore", category=SyntaxWarning, module="yahooquery")
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,15 +5,13 @@ import plotly.graph_objects as go
 from yahooquery import Ticker
 from datetime import datetime, timedelta
 
-
-st.set_page_config(layout="wide", page_title="1‑Hr Multi‑Strategy Backtester")
+st.set_page_config(layout="wide", page_title="1-Hr Multi-Strategy Backtester")
 
 SYMBOLS = {
     "XAUUSD": "GC=F",
-    "US100":  "^NDX",
-    "US500":  "^GSPC",
+    "US100": "^NDX",
+    "US500": "^GSPC",
 }
-
 
 def fetch_1h_data(ticker_str, days=180):
     now = datetime.now()
@@ -29,7 +24,6 @@ def fetch_1h_data(ticker_str, days=180):
         df = df.sort_values("timestamp").reset_index(drop=True)
         return df[["timestamp", "open", "high", "low", "close", "volume"]]
     return None
-
 
 def add_indicators(df):
     df = df.copy()
@@ -54,14 +48,12 @@ def add_indicators(df):
     df["roc"] = df["close"].pct_change(12)
     return df
 
-
 def simulate_mean_reversion_signals(df, sl_scale=1.0, tp_scale=1.5, z_thresh=2.0):
     df = df.copy()
     df["signal"] = 0.0
     df["sl"] = np.nan
     df["tp"] = np.nan
     df["entry_price"] = np.nan
-
     in_trade = False
     for i in range(1, len(df)):
         close = df.loc[i, "close"]
@@ -70,20 +62,8 @@ def simulate_mean_reversion_signals(df, sl_scale=1.0, tp_scale=1.5, z_thresh=2.0
         z = df.loc[i, "z"]
         rsi = df.loc[i, "rsi"]
         adx = df.loc[i, "adx"]
-
-        long_cond = (
-            not in_trade
-            and z < -z_thresh
-            and rsi < 30
-            and adx < 25
-        )
-        short_cond = (
-            not in_trade
-            and z > z_thresh
-            and rsi > 70
-            and adx < 25
-        )
-
+        long_cond = not in_trade and z < -z_thresh and rsi < 30 and adx < 25
+        short_cond = not in_trade and z > z_thresh and rsi > 70 and adx < 25
         if long_cond or short_cond:
             next_i = i + 1
             if next_i >= len(df):
@@ -109,17 +89,12 @@ def simulate_mean_reversion_signals(df, sl_scale=1.0, tp_scale=1.5, z_thresh=2.0
             if pd.isna(prev_entry) or pd.isna(prev_sl) or pd.isna(prev_tp):
                 continue
             if df.loc[i - 1, "signal"] > 0:
-                if close >= prev_tp:
-                    in_trade = False
-                elif close <= prev_sl:
+                if close >= prev_tp or close <= prev_sl:
                     in_trade = False
             if df.loc[i - 1, "signal"] < 0:
-                if close <= prev_tp:
-                    in_trade = False
-                elif close >= prev_sl:
+                if close <= prev_tp or close >= prev_sl:
                     in_trade = False
     return df
-
 
 def simulate_trend_signals(df, sl_scale=1.2, tp_scale=1.2):
     df = df.copy()
@@ -127,17 +102,14 @@ def simulate_trend_signals(df, sl_scale=1.2, tp_scale=1.2):
     df["sl"] = np.nan
     df["tp"] = np.nan
     df["entry_price"] = np.nan
-
     df["ma20"] = df["close"].rolling(20).mean()
     df["trend_up"] = (df["ma20"].diff() > 0).rolling(5).mean() > 0.5
     df["trend_down"] = (df["ma20"].diff() < 0).rolling(5).mean() > 0.5
-
     in_trade = False
     for i in range(20, len(df)):
         close = df.loc[i, "close"]
         low = df.loc[i, "low"]
         high = df.loc[i, "high"]
-
         if not in_trade and df.loc[i, "trend_up"] and close < df.loc[i, "ma20"]:
             atr = df.loc[i - 10:i, "high"].max() - df.loc[i - 10:i, "low"].min()
             if atr <= 0:
@@ -173,18 +145,15 @@ def simulate_trend_signals(df, sl_scale=1.2, tp_scale=1.2):
                 in_trade = False
     return df
 
-
 def simulate_speed_momentum_signals(df, sl_scale=0.8, tp_scale=2.0):
     df = df.copy()
     df["signal"] = 0.0
     df["sl"] = np.nan
     df["tp"] = np.nan
     df["entry_price"] = np.nan
-
     vol_ma = df["volume"].rolling(20).mean()
     vol_std = df["volume"].rolling(20).std()
     vol_z = (df["volume"] - vol_ma) / (vol_std + 1e-8)
-
     in_trade = False
     for i in range(20, len(df)):
         close = df.loc[i, "close"]
@@ -192,10 +161,8 @@ def simulate_speed_momentum_signals(df, sl_scale=0.8, tp_scale=2.0):
         high = df.loc[i, "high"]
         roc = df.loc[i, "roc"]
         v_z = vol_z.iloc[i]
-
         long_cond = not in_trade and roc > 0.05 and v_z > 1.5
         short_cond = not in_trade and roc < -0.05 and v_z > 1.5
-
         if long_cond or short_cond:
             atr = df.loc[i - 10:i, "high"].max() - df.loc[i - 10:i, "low"].min()
             if atr <= 0:
@@ -221,23 +188,19 @@ def simulate_speed_momentum_signals(df, sl_scale=0.8, tp_scale=2.0):
                 in_trade = False
     return df
 
-
 def backtest_signals(df, strat_name):
     trades = []
     in_trade = False
     entry_idx = -1
-
     for i in range(len(df)):
         sig = df.loc[i, "signal"]
         close = df.loc[i, "close"]
         sl = df.loc[i, "sl"]
         tp = df.loc[i, "tp"]
         entry_price = df.loc[i, "entry_price"]
-
         if sig != 0.0 and not in_trade:
             in_trade = True
             entry_idx = i
-
         if in_trade:
             if sig > 0:
                 if close >= tp and not pd.isna(tp):
@@ -281,48 +244,37 @@ def backtest_signals(df, strat_name):
                         "pnl_pct": pnl
                     })
                     in_trade = False
-
     if not trades:
         return pd.DataFrame(), 0.0, 0.0, 0.0
-
     df_trades = pd.DataFrame(trades)
     total_return = df_trades["pnl_pct"].sum()
     wins = df_trades["status"] == "win"
     win_rate = wins.mean() if len(wins) > 0 else 0.0
     avg_rr = df_trades["pnl_pct"].mean() if len(df_trades) > 0 else 0.0
-
     return df_trades, total_return, avg_rr, win_rate
 
-
-st.title("📈 1‑Hr Multi‑Strategy Backtester (yahooquery)")
-
+st.title("📈 1-Hr Multi-Strategy Backtester (yahooquery)")
 selected_assets = st.multiselect(
     "Select assets",
     list(SYMBOLS.keys()),
     default=["XAUUSD", "US100", "US500"]
 )
-
 STRAT_DEFS = {
     "mean_reversion": simulate_mean_reversion_signals,
     "trend": simulate_trend_signals,
     "speed_momentum": simulate_speed_momentum_signals,
 }
-
 if st.button("Run Backtest") and selected_assets:
     all_results = []
     all_trades_dfs = []
-
     for asset_name in selected_assets:
         ticker_str = SYMBOLS[asset_name]
         st.subheader(f"📊 {asset_name} ({ticker_str})")
-
         data = fetch_1h_data(ticker_str, days=180)
         if data is None or len(data) < 50:
             st.warning(f"Failed to load sufficient data for {asset_name}")
             continue
-
         df = add_indicators(data)
-
         fig = go.Figure()
         fig.add_trace(go.Candlestick(
             x=df["timestamp"],
@@ -333,19 +285,17 @@ if st.button("Run Backtest") and selected_assets:
             name="OHLC"
         ))
         fig.update_layout(
-            title=f"{asset_name} 1‑Hr",
+            title=f"{asset_name} 1-Hr",
             xaxis_title="Time",
             yaxis_title="Price",
             width=800,
             height=400
         )
         st.plotly_chart(fig)
-
         for strat_name, sim_func in STRAT_DEFS.items():
             with st.spinner(f"Backtesting {asset_name} – {strat_name} ..."):
                 df_sig = sim_func(df.copy())
                 df_trades, total_return, avg_rr, win_rate = backtest_signals(df_sig, strat_name)
-
             all_results.append({
                 "asset": asset_name,
                 "strategy": strat_name,
@@ -356,7 +306,6 @@ if st.button("Run Backtest") and selected_assets:
             })
             if len(df_trades) > 0:
                 all_trades_dfs.append(df_trades)
-
     if all_results:
         df_results = pd.DataFrame(all_results)
         st.dataframe(df_results.style.format({
@@ -364,7 +313,6 @@ if st.button("Run Backtest") and selected_assets:
             "avg_rr": "{:.2f}",
             "win_rate": "{:.2%}",
         }))
-
         pivot = df_results.pivot_table(
             index="strategy",
             values=["total_return", "avg_rr", "win_rate"],
