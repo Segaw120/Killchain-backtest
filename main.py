@@ -5,20 +5,18 @@ import plotly.graph_objects as go
 from yahooquery import Ticker
 from datetime import datetime, timedelta
 
-st.set_page_config(layout="wide", page_title="1‑Hr Multi‑Strategy Backtester")
+st.set_page_config(layout="wide", page_title="1-Hr Multi-Strategy Backtester")
 
 SYMBOLS = {
     "XAUUSD": "GC=F",
-    "US100":  "^NDX",
-    "US500":  "^GSPC",
+    "US100": "QQQ",
+    "US500": "SPY",
 }
 
 
 def fetch_1h_data(ticker_str, days=180):
-    now = datetime.now()
-    start = now - timedelta(days=days)
     t = Ticker(ticker_str, asynchronous=True)
-    df = t.history(period="3mo", interval="1h")
+    df = t.history(period="6mo", interval="1h")
     if df is not None and len(df) > 0:
         df = df.reset_index()
         df["timestamp"] = df["date"].dt.tz_localize(None)
@@ -71,14 +69,12 @@ def simulate_mean_reversion_signals(df, sl_scale=1.2, tp_scale=1.5, z_thresh=2.0
 
         long_cond = (
             not pd.isna(z)
-            and abs(z) > 0
             and z < -z_thresh
             and rsi < 30
             and adx < 25
         )
         short_cond = (
             not pd.isna(z)
-            and abs(z) > 0
             and z > z_thresh
             and rsi > 70
             and adx < 25
@@ -164,8 +160,8 @@ def simulate_speed_momentum_signals(df, sl_scale=0.8, tp_scale=2.0):
         roc = df.loc[i, "roc"]
         vol_z = df.loc[i, "vol_z"]
 
-        long_cond = not pd.isna(roc) and roc > 0.03 and vol_z > 1.5
-        short_cond = not pd.isna(roc) and roc < -0.03 and vol_z > 1.5
+        long_cond = not pd.isna(roc) and roc > 0.01 and vol_z > 1.0
+        short_cond = not pd.isna(roc) and roc < -0.01 and vol_z > 1.0
 
         if long_cond or short_cond:
             atr = df.loc[i - 10:i, "high"].max() - df.loc[i - 10:i, "low"].min()
@@ -185,66 +181,74 @@ def simulate_speed_momentum_signals(df, sl_scale=0.8, tp_scale=2.0):
 
 def backtest_signals(df, strat_name):
     trades = []
-    in_trade = False
-    entry_idx = -1
+    position = None
 
     for i in range(len(df)):
         sig = df.loc[i, "signal"]
         close = df.loc[i, "close"]
+        high = df.loc[i, "high"]
+        low = df.loc[i, "low"]
         sl = df.loc[i, "sl"]
         tp = df.loc[i, "tp"]
         entry_price = df.loc[i, "entry_price"]
 
-        if sig != 0.0:
-            if not in_trade:
-                in_trade = True
-                entry_idx = i
-                continue
-        if not in_trade:
+        if position is None and sig != 0.0:
+            position = {
+                "direction": "long" if sig > 0 else "short",
+                "entry_price": entry_price,
+                "sl": sl,
+                "tp": tp,
+            }
             continue
 
-        if sig > 0:
-            if not pd.isna(tp) and close >= tp:
-                pnl = (tp - entry_price) / (entry_price - sl)
+        if position is None:
+            continue
+
+        if position["direction"] == "long":
+            hit_sl = not pd.isna(position["sl"]) and low <= position["sl"]
+            hit_tp = not pd.isna(position["tp"]) and high >= position["tp"]
+
+            if hit_tp or hit_sl:
+                if hit_tp and not hit_sl:
+                    pnl = (position["tp"] - position["entry_price"]) / (position["entry_price"] - position["sl"])
+                    status = "win"
+                    exit_price = position["tp"]
+                else:
+                    pnl = (position["sl"] - position["entry_price"]) / (position["entry_price"] - position["sl"])
+                    status = "loss"
+                    exit_price = position["sl"]
+
                 trades.append({
                     "strategy": strat_name,
                     "asset": "N/A",
                     "direction": "long",
-                    "status": "win",
+                    "status": status,
                     "pnl_pct": pnl
                 })
-                in_trade = False
-            elif not pd.isna(sl) and close <= sl:
-                pnl = (sl - entry_price) / (entry_price - sl)
-                trades.append({
-                    "strategy": strat_name,
-                    "asset": "N/A",
-                    "direction": "long",
-                    "status": "loss",
-                    "pnl_pct": pnl
-                })
-                in_trade = False
-        elif sig < 0:
-            if not pd.isna(tp) and close <= tp:
-                pnl = (entry_price - tp) / (sl - entry_price)
-                trades.append({
-                    "strategy": strat_name,
-                    "asset": "N/A",
-                    "direction": "short",
-                    "status": "win",
-                    "pnl_pct": pnl
-                })
-                in_trade = False
-            elif not pd.isna(sl) and close >= sl:
-                pnl = (entry_price - sl) / (sl - entry_price)
+                position = None
+
+        else:
+            hit_sl = not pd.isna(position["sl"]) and high >= position["sl"]
+            hit_tp = not pd.isna(position["tp"]) and low <= position["tp"]
+
+            if hit_tp or hit_sl:
+                if hit_tp and not hit_sl:
+                    pnl = (position["entry_price"] - position["tp"]) / (position["sl"] - position["entry_price"])
+                    status = "win"
+                    exit_price = position["tp"]
+                else:
+                    pnl = (position["entry_price"] - position["sl"]) / (position["sl"] - position["entry_price"])
+                    status = "loss"
+                    exit_price = position["sl"]
+
                 trades.append({
                     "strategy": strat_name,
                     "asset": "N/A",
                     "direction": "short",
-                    "status": "loss",
+                    "status": status,
                     "pnl_pct": pnl
                 })
-                in_trade = False
+                position = None
 
     if not trades:
         return pd.DataFrame(), 0.0, 0.0, 0.0
@@ -258,12 +262,12 @@ def backtest_signals(df, strat_name):
     return df_trades, total_return, avg_rr, win_rate
 
 
-st.title("📈 1‑Hr Multi‑Strategy Backtester (yahooquery)")
+st.title("📈 1-Hr Multi-Strategy Backtester (yahooquery)")
 
 selected_assets = st.multiselect(
     "Select assets",
     list(SYMBOLS.keys()),
-    default=["XAUUSD", "US100", "US500"]
+    default=list(SYMBOLS.keys())
 )
 
 STRAT_DEFS = {
@@ -296,7 +300,7 @@ if st.button("Run Backtest") and selected_assets:
             name="OHLC"
         ))
         fig.update_layout(
-            title=f"{asset_name} 1‑Hr",
+            title=f"{asset_name} 1-Hr",
             xaxis_title="Time",
             yaxis_title="Price",
             width=800,
@@ -320,7 +324,7 @@ if st.button("Run Backtest") and selected_assets:
             if len(df_trades) > 0:
                 st.write(f"**{strat_name}** → {len(df_trades)} trades (avg RR: {avg_rr:.2f}, WR: {win_rate:.1%})")
             else:
-                st.write(f"**{strat_name}** → 0 trades (try relaxing `z_thresh`/`roc` thresholds)")
+                st.write(f"**{strat_name}** → 0 trades")
 
     if all_results:
         df_results = pd.DataFrame(all_results)
