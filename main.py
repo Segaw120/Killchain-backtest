@@ -1,9 +1,13 @@
+import warnings
+warnings.filterwarnings("ignore", category=SyntaxWarning, module="yahooquery")
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from yahooquery import Ticker
 from datetime import datetime, timedelta
+
 
 st.set_page_config(layout="wide", page_title="1‑Hr Multi‑Strategy Backtester")
 
