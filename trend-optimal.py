@@ -45,56 +45,61 @@ def simulate_trend(df, rsi_low, rsi_high, sl_scale, rr):
         row = df.iloc[i]
         prev = df.iloc[i - 1]
 
-        if pd.isna(row["ma_fast"]) or pd.isna(row["ma_slow"]):
+        if pd.isna(row["ma_fast"]) or pd.isna(row["ma_slow"]) or pd.isna(row["atr"]):
             continue
 
         uptrend = row["ma_fast"] > row["ma_slow"] and row["ma_fast"] > prev["ma_fast"]
         downtrend = row["ma_fast"] < row["ma_slow"] and row["ma_fast"] < prev["ma_fast"]
 
         if position is None:
-            if uptrend and row["close"] <= row["ma_fast"] and rsi_low <= row["rsi"] <= rsi_high:
-                if prev["close"] < prev["ma_fast"] and row["close"] > row["ma_fast"]:
+            if uptrend and prev["close"] <= prev["ma_fast"] and rsi_low <= row["rsi"] <= rsi_high:
+                if row["close"] > row["ma_fast"]:
                     atr = row["atr"]
-                    if pd.isna(atr) or atr <= 0:
-                        continue
                     sl = df.iloc[i-5:i]["low"].min() - sl_scale * atr
                     tp = row["close"] + rr * (row["close"] - sl)
-                    position = ("long", row["close"], sl, tp)
+                    position = {
+                        "dir": "long",
+                        "entry": row["close"],
+                        "sl": sl,
+                        "tp": tp
+                    }
 
-            elif downtrend and row["close"] >= row["ma_fast"] and rsi_low <= row["rsi"] <= rsi_high:
-                if prev["close"] > prev["ma_fast"] and row["close"] < row["ma_fast"]:
+            elif downtrend and prev["close"] >= prev["ma_fast"] and rsi_low <= row["rsi"] <= rsi_high:
+                if row["close"] < row["ma_fast"]:
                     atr = row["atr"]
-                    if pd.isna(atr) or atr <= 0:
-                        continue
                     sl = df.iloc[i-5:i]["high"].max() + sl_scale * atr
                     tp = row["close"] - rr * (sl - row["close"])
-                    position = ("short", row["close"], sl, tp)
+                    position = {
+                        "dir": "short",
+                        "entry": row["close"],
+                        "sl": sl,
+                        "tp": tp
+                    }
 
         else:
-            direction, entry, sl, tp = position
             high = row["high"]
             low = row["low"]
 
-            if direction == "long":
-                if low <= sl:
+            if position["dir"] == "long":
+                if low <= position["sl"]:
                     trades.append(0)
                     position = None
-                elif high >= tp:
+                elif high >= position["tp"]:
                     trades.append(1)
                     position = None
 
             else:
-                if high >= sl:
+                if high >= position["sl"]:
                     trades.append(0)
                     position = None
-                elif low <= tp:
+                elif low <= position["tp"]:
                     trades.append(1)
                     position = None
 
     if len(trades) == 0:
-        return 0, 0
+        return 0.0, 0.0
 
-    win_rate = np.mean(trades)
+    win_rate = float(np.mean(trades))
     trades_per_week = len(trades) / (len(df) / 24 / 7)
 
     return win_rate, trades_per_week
@@ -111,7 +116,7 @@ def run_grid_search(df, progress_bar):
     results = []
 
     best = None
-    best_score = -1
+    best_score = -1.0
 
     for idx, (ma_fast, ma_slow, (rsi_low, rsi_high), sl_scale, rr) in enumerate(combos):
         if ma_fast >= ma_slow:
